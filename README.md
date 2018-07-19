@@ -4,7 +4,7 @@
 [![Nuget downloads][downloads-image]][downloads-url]
 [![Build status][travis-image]][travis-url]
 
-You can sign up for a free [developer sandbox](https://www.docusign.com/developer-center). 
+You can sign up for a free [developer sandbox](https://developers.docusign.com/). 
 
 Requirements
 ============
@@ -48,149 +48,70 @@ using DocuSign.eSign.Api;
 using DocuSign.eSign.Model;
 using DocuSign.eSign.Client;
 using System.Collections.Generic;
+using DocuSign.eSign.Client.Auth;
 
 namespace DocuSignSample
 {
-	class Program
-	{
-		static void Main(string[] args)
-		{
-			string userId = "[USER_ID]"; // use your userId (guid), not email address
-			string oauthBasePath = "[OAUTH_BASE_PATH]";
-			string integratorKey = "[INTEGRATOR_KEY]";
-			string privateKeyFilename = "[PRIVATE_KEY_FILENAME]";
-			int expiresInHours = 1;
-			string host = "https://demo.docusign.net/restapi";
+    class Program
+    {
+        static void Main(string[] args)
+        {
+            string userId = "[USER_ID]"; // use your userId (guid), not email address
+            string oauthBasePath = "[OAUTH_BASE_PATH]";
+            string integratorKey = "[INTEGRATOR_KEY]";
+            string privateKey = "[PRIVATE_KEY]";
+            int expiresInHours = 1;
+            string host = "https://demo.docusign.net/restapi";
 
-			string accountId = string.Empty;
+            string accountId = string.Empty;
 
-			ApiClient apiClient = new ApiClient(host);
-			apiClient.ConfigureJwtAuthorizationFlow(integratorKey, userId, oauthBasePath, privateKeyFilename, expiresInHours);
+            ApiClient apiClient = new ApiClient(host);
+            OAuth.OAuthToken tokenInfo = apiClient.ConfigureJwtAuthorizationFlowByKey(integratorKey, userId, oauthBasePath, privateKey, expiresInHours);
 
-			/////////////////////////////////////////////////////////////////
-			// STEP 1: LOGIN API        
-			/////////////////////////////////////////////////////////////////
-			AuthenticationApi authApi = new AuthenticationApi(apiClient.Configuration);
-			LoginInformation loginInfo = authApi.Login();
+            /////////////////////////////////////////////////////////////////
+            // STEP 1: Get User Info   
+            // now that the API client has an OAuth token, let's use it in all// DocuSign APIs
+            /////////////////////////////////////////////////////////////////
 
-			// find the default account for this user
-			foreach (LoginAccount loginAcct in loginInfo.LoginAccounts)
-			{
-				if (loginAcct.IsDefault == "true")
-				{
-					accountId = loginAcct.AccountId;
+            OAuth.UserInfo userInfo = apiClient.GetUserInfo(tokenInfo.access_token);
+            
+            foreach (var item in userInfo.GetAccounts())
+            {
+                if (item.GetIsDefault() == "true")
+                {
+                    accountId = item.AccountId();
+                    apiClient = new ApiClient(item.GetBaseUri() + "/restapi");
+                    break;
+                }
+            }
 
-					string[] separatingStrings = { "/v2" };
+            /////////////////////////////////////////////////////////////////
+            // STEP 2: CREATE ENVELOPE API        
+            /////////////////////////////////////////////////////////////////
 
-					// Update ApiClient with the new base url from login call
-					apiClient = new ApiClient(loginAcct.BaseUrl.Split(separatingStrings, StringSplitOptions.RemoveEmptyEntries)[0]);
-					break;
-				}
-			}
+            EnvelopeDefinition envDef = new EnvelopeDefinition();
+            envDef.EmailSubject = "[DocuSign C# SDK] - Please sign this doc";
 
-			/////////////////////////////////////////////////////////////////
-			// STEP 2: CREATE ENVELOPE API        
-			/////////////////////////////////////////////////////////////////				
+            // assign recipient to template role by setting name, email, and role name.  Note that the
+            // template role name must match the placeholder role name saved in your account template.  
+            TemplateRole tRole = new TemplateRole();
+            tRole.Email = "[SIGNER_EMAIL]";
+            tRole.Name = "[SIGNER_NAME]";
+            tRole.RoleName = "[ROLE_NAME]";
+            List<TemplateRole> rolesList = new List<TemplateRole>() { tRole };
 
-			EnvelopeDefinition envDef = new EnvelopeDefinition();
-			envDef.EmailSubject = "[DocuSign C# SDK] - Please sign this doc";
+            // add the role to the envelope and assign valid templateId from your account
+            envDef.TemplateRoles = rolesList;
+            envDef.TemplateId = "[TEMPLATE_ID]";
 
-			// assign recipient to template role by setting name, email, and role name.  Note that the
-			// template role name must match the placeholder role name saved in your account template.  
-			TemplateRole tRole = new TemplateRole();
-			tRole.Email = "[SIGNER_EMAIL]";
-			tRole.Name = "[SIGNER_NAME]";
-			tRole.RoleName = "[ROLE_NAME]";
-			List<TemplateRole> rolesList = new List<TemplateRole>() { tRole };
+            // set envelope status to "sent" to immediately send the signature request
+            envDef.Status = "sent";
 
-			// add the role to the envelope and assign valid templateId from your account
-			envDef.TemplateRoles = rolesList;
-			envDef.TemplateId = "[TEMPLATE_ID]";
-
-			// set envelope status to "sent" to immediately send the signature request
-			envDef.Status = "sent";
-
-			// |EnvelopesApi| contains methods related to creating and sending Envelopes (aka signature requests)
-			EnvelopesApi envelopesApi = new EnvelopesApi(apiClient.Configuration);
-			EnvelopeSummary envelopeSummary = envelopesApi.CreateEnvelope(accountId, envDef);
-		}
-	}
-}
-```
-
-To send a signature request from a template using legacy authentication:
-
-```csharp
-using DocuSign.eSign.Api;
-using DocuSign.eSign.Model;
-using DocuSign.eSign.Client;
-
-namespace DocuSignSample
-{
-	class Program
-	{
-		static void Main(string[] args)
-		{
-			string username = "[EMAIL]";
-			string password = "[PASSWORD]";
-			string integratorKey = "[INTEGRATOR_KEY]";
-
-			// initialize client for desired environment (for production change to www)
-			ApiClient apiClient = new ApiClient("https://demo.docusign.net/restapi");
-			Configuration.Default.ApiClient = apiClient;
-
-			// configure 'X-DocuSign-Authentication' header
-			string authHeader = "{\"Username\":\"" + username + "\", \"Password\":\"" + password + "\", \"IntegratorKey\":\"" + integratorKey + "\"}";
-			Configuration.Default.AddDefaultHeader("X-DocuSign-Authentication", authHeader);
-
-			// we will retrieve this from the login API call
-			string accountId = null;
-
-			/////////////////////////////////////////////////////////////////
-			// STEP 1: LOGIN API        
-			/////////////////////////////////////////////////////////////////
-
-			// login call is available in the authentication api 
-			AuthenticationApi authApi = new AuthenticationApi();
-			LoginInformation loginInfo = authApi.Login();
-			
-			// parse the first account ID that is returned (user might belong to multiple accounts)
-			accountId = loginInfo.LoginAccounts[0].AccountId;
-			
-			// Update ApiClient with the new base url from login call
-    			string[] separatingStrings = { "/v2" };
-			apiClient = new ApiClient(loginInfo.LoginAccounts[0].BaseUrl.Split(separatingStrings, StringSplitOptions.RemoveEmptyEntries)[0]);
-    
-			/////////////////////////////////////////////////////////////////
-			// STEP 2: CREATE ENVELOPE API        
-			/////////////////////////////////////////////////////////////////				
-			
-			// create a new envelope which we will use to send the signature request
-			EnvelopeDefinition envDef = new EnvelopeDefinition();
-			envDef.EmailSubject = "[DocuSign C# SDK] - Sample Signature Request";
-
-			// provide a valid template ID from a template in your account
-			envDef.TemplateId = "[TEMPLATE_ID]";
-
-			// assign recipient to template role by setting name, email, and role name.  Note that the
-			// template role name must match the placeholder role name saved in your account template.  
-			TemplateRole tRole = new TemplateRole();
-			tRole.Email = "[SIGNER_EMAIL]";
-			tRole.Name = "[SIGNER_NAME]";
-			tRole.RoleName = "[ROLE_NAME]";
-
-			// add the roles list with the our single role to the envelope
-			List<TemplateRole> rolesList = new List<TemplateRole>() { tRole };
-			envDef.TemplateRoles = rolesList;
-
-			// set envelope status to "sent" to immediately send the signature request
-			envDef.Status = "sent";
-
-			// |EnvelopesApi| contains methods related to creating and sending Envelopes (aka signature requests)
-			EnvelopesApi envelopesApi = new EnvelopesApi();
-			EnvelopeSummary envelopeSummary = envelopesApi.CreateEnvelope(accountId, envDef);
-		}
-	}
+            // |EnvelopesApi| contains methods related to creating and sending Envelopes (aka signature requests)
+            EnvelopesApi envelopesApi = new EnvelopesApi(apiClient.Configuration);
+            EnvelopeSummary envelopeSummary = envelopesApi.CreateEnvelope(accountId, envDef);
+        }
+    }
 }
 ```
 
@@ -200,9 +121,9 @@ See [CoreRecipes.cs](https://github.com/docusign/docusign-csharp-client/blob/mas
 
 ## Service Integrations that use Legacy Header Authentication
 
-([Legacy Header Authentication](https://docs.docusign.com/esign/guide/authentication/legacy_auth.html) uses the X-DocuSign-Authentication header.)
+(Legacy Header Authentication uses the X-DocuSign-Authentication header.)
 
-1. Use the [Authentication: login method](https://docs.docusign.com/esign/restapi/Authentication/Authentication/login/) to retrieve the account number **and the baseUrl** for the account.
+1. Use the [Authentication: login method](https://developers.docusign.com/esign-rest-api/reference/Authentication/Authentication/login) to retrieve the account number **and the baseUrl** for the account.
 The url for the login method is www.docusign.net for production and demo.docusign.net for the developer sandbox.
 The `baseUrl` field is part of the `loginAccount` object. See the [docs and the loginAccount object](https://docs.docusign.com/esign/restapi/Authentication/Authentication/login/#/definitions/loginAccount)
 2. The baseUrl for the selected account, in production, will start with na1, na2, na3, eu1, or something else. Use the baseUrl that is returned to create the *basePath* (see the next step.) Use the basePath for all of your subsequent API calls.
@@ -211,11 +132,11 @@ The `baseUrl` field is part of the `loginAccount` object. See the [docs and the 
 5. Set the authentication header as shown in the examples by using `Configuration.Default.AddDefaultHeader`
 
 ## User Applications that use OAuth Authentication
-1. After obtaining a Bearer token, call the [OAuth: Userinfo method](https://docs.docusign.com/esign/guide/authentication/userinfo.html). Obtain the selected account's `base_uri` (server name) field.
+1. After obtaining a Bearer token, call the [OAuth: Userinfo method](https://developers.docusign.com/esign-rest-api/guides/authentication/user-info-endpoints). Obtain the selected account's `base_uri` (server name) field.
 The url for the Userinfo method is account-d.docusign.com for the demo/developer environment, and account.docusign.com for the production environment.
 1. Combine the base_uri with "/restapi" to create the basePath. The base_uri will start with na1, na2, na3, eu1, or something else. Use the basePath for your subsequent API calls.
 4. Instantiate the SDK using the basePath. Eg `ApiClient apiClient = new ApiClient(basePath);`
-5. Create the `authentication_value` by combining the `token_type` and `access_token` fields you receive from either an [Authorization Code Grant](https://docs.docusign.com/esign/guide/authentication/oa2_auth_code.html) or [Implicit Grant](https://docs.docusign.com/esign/guide/authentication/oa2_implicit.html) OAuth flow. 
+5. Create the `authentication_value` by combining the `token_type` and `access_token` fields you receive from either an [Authorization Code Grant](https://developers.docusign.com/esign-rest-api/guides/authentication/oauth2-code-grant) or [Implicit Grant](https://developers.docusign.com/esign-rest-api/guides/authentication/oauth2-implicit) OAuth flow. 
 5. Set the authentication header by using `Configuration.Default.AddDefaultHeader('Authorization', authentication_value)`
 
 
